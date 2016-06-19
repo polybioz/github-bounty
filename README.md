@@ -1,3 +1,3 @@
-# GitHub Bounty
-The GitHub Bounty enables the owner to deposit bounties over GitHub issues. Oraclize will then query once a day GitHub APIs and update the contract data. When the owner closes the issue, the contract will pay the bounty to the assignee of the issue.
+﻿# GitHub Bounty
+Inspired by [StackExchange Bounty ÐApp](https://github.com/oraclize/dapp-stackexchange-bounty). The GitHub Bounty enables the owner to deposit bounties over GitHub issues. Oraclize will then query once a day GitHub APIs and update the contract data. When the owner closes the issue, the contract will pay the bounty to the assignee of the issue.
 The bounty can be send only if the *winner* has an Ethereum address in the location field on his GitHub subsite profile. If no address is found, Oraclize will keep querying for that address once a day.
