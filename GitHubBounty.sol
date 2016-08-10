@@ -1,94 +1,113 @@
 import "mortal.sol";
 import "oraclizeAPI.sol";
-import "stringUtils.sol";
 
 contract GitHubBounty is usingOraclize, mortal {
     
     enum QueryType { IssueState, IssueAssignee, UserAddress }
     
-    struct user {
-        string login;
-        address ethAddress;
-    }
-    
-    struct issue {
-        string url;
+    struct Bounty {
+        string issueUrl;
         uint prize;
         uint balance;
-        user assignee;
-        string state;
-        mapping (bytes32=>QueryType) queryType;
+        uint queriesDelay;
+        string closedAt;
+        string assigneeLogin;
+        address assigneeAddress;
     }
  
-    mapping (bytes32 => string) queries;
-    mapping (string => issue) bounties;
+    mapping (bytes32 => bytes32) queriesKey;
+    mapping (bytes32 => QueryType) queriesType;
+    mapping (bytes32 => Bounty) public bounties;
+    bytes32[] public bountiesKey;
+    mapping (address => bool) public sponsors;
     
-    uint queriesDelay = 60 * 60 * 24; // one day delay
     uint contractBalance;
     
-    event BountyAdded(string issueUrl);
-    event IssueStateLoaded(string issueUrl, string state);
-    event IssueAssigneeLoaded(string issueUrl, string login);
-    event UserAddressLoaded(string issueUrl, string ethAddress);
-    event SendingBounty(string issueUrl, uint prize);
-    event BountySent(string issueUrl);
+    event SponsorAdded(address sponsorAddr);
+    event BountyAdded(bytes32 bountyKey, string issueUrl);
+    event IssueStateLoaded(bytes32 bountyKey, string closedAt);
+    event IssueAssigneeLoaded(bytes32 bountyKey, string login);
+    event UserAddressLoaded(bytes32 bountyKey, string ethAddress);
+    event SendingBounty(bytes32 bountyKey, uint prize);
+    event BountySent(bytes32 bountyKey);
     
     uint oraclizeGasLimit = 1000000;
 
     function GitHubBounty() {
     }
     
-    function addIssueBounty(string issueUrl){
-        BountyAdded(issueUrl);
+    function addSponsor(address sponsorAddr)
+    {
         if (msg.sender != owner) throw;
-        if(bytes(issueUrl).length==0) throw;
-        if(msg.value == 0) throw;
+        sponsors[sponsorAddr] = true;
+        SponsorAdded(sponsorAddr);
+    }
+    
+    // issueUrl: full API url of github issue, e.g. https://api.github.com/repos/polybioz/hello-world/issues/6
+    // queriesDelay: oraclize queries delay in minutes, e.g. 60*24 for one day, min 1 minute
+    function addIssueBounty(string issueUrl, uint queriesDelay){
         
-        bounties[issueUrl].url = issueUrl;
-        bounties[issueUrl].prize = msg.value;
-        bounties[issueUrl].balance = msg.value;
-        bounties[issueUrl].state = "open";
+        if (!sponsors[msg.sender]) throw;
+        if (bytes(issueUrl).length==0) throw;
+        if (msg.value == 0) throw;
+        if (queriesDelay == 0) throw;
+        
+        bytes32 bountyKey = sha3(issueUrl);
+        
+        bounties[bountyKey].issueUrl = issueUrl;
+        bounties[bountyKey].prize = msg.value;
+        bounties[bountyKey].balance = msg.value;
+        bounties[bountyKey].queriesDelay = queriesDelay;
+        
+        bountiesKey.push(bountyKey);
+        
+        BountyAdded(bountyKey, issueUrl);
  
-        getIssueState(queriesDelay, issueUrl);
+        getIssueState(queriesDelay, bountyKey);
     }
      
-    function getIssueState(uint delay, string issueUrl) internal {
+    function getIssueState(uint delay, bytes32 bountyKey) internal {
         contractBalance = this.balance;
         
+        string issueUrl = bounties[bountyKey].issueUrl;
         bytes32 myid = oraclize_query(delay, "URL", strConcat("json(",issueUrl,").closed_at"), oraclizeGasLimit);
-        queries[myid] = issueUrl;
-        bounties[issueUrl].queryType[myid] = QueryType.IssueState;
+        queriesKey[myid] = bountyKey;
+        queriesType[myid] = QueryType.IssueState;
         
-        bounties[issueUrl].balance -= contractBalance - this.balance;
+        bounties[bountyKey].balance -= contractBalance - this.balance;
     }
     
-    function getIssueAssignee(uint delay, string issueUrl) internal {
+    function getIssueAssignee(uint delay, bytes32 bountyKey) internal {
         contractBalance = this.balance;
         
+        string issueUrl = bounties[bountyKey].issueUrl;
         bytes32 myid = oraclize_query(delay, "URL", strConcat("json(",issueUrl,").assignee.login"), oraclizeGasLimit);
-        queries[myid] = issueUrl;
-        bounties[issueUrl].queryType[myid] = QueryType.IssueAssignee;
+        queriesKey[myid] = bountyKey;
+        queriesType[myid] = QueryType.IssueAssignee;
         
-        bounties[issueUrl].balance -= contractBalance - this.balance;
+        bounties[bountyKey].balance -= contractBalance - this.balance;
     }
     
-    function getUserAddress(uint delay, string issueUrl, string login) internal {
+    function getUserAddress(uint delay, bytes32 bountyKey) internal {
         contractBalance = this.balance;
         
+        string login = bounties[bountyKey].assigneeLogin;
         string memory url = strConcat("https://api.github.com/users/", login);
         bytes32 myid = oraclize_query(delay, "URL", strConcat("json(",url,").location"), oraclizeGasLimit);
-        queries[myid] = issueUrl;
-        bounties[issueUrl].queryType[myid] = QueryType.UserAddress;
+        queriesKey[myid] = bountyKey;
+        queriesType[myid] = QueryType.UserAddress;
         
-        bounties[issueUrl].balance -= contractBalance - this.balance;
+        bounties[bountyKey].balance -= contractBalance - this.balance;
     }
     
-    function sendBounty(string issueUrl) internal {
-        SendingBounty(issueUrl, bounties[issueUrl].balance);
-        if(bounties[issueUrl].balance > 0) {
-            if (bounties[issueUrl].assignee.ethAddress.send(bounties[issueUrl].balance)) {
-                bounties[issueUrl].balance = 0;
-                BountySent(issueUrl);
+    function sendBounty(bytes32 bountyKey) internal {
+        string issueUrl = bounties[bountyKey].issueUrl;
+        
+        SendingBounty(bountyKey, bounties[bountyKey].balance);
+        if(bounties[bountyKey].balance > 0) {
+            if (bounties[bountyKey].assigneeAddress.send(bounties[bountyKey].balance)) {
+                bounties[bountyKey].balance = 0;
+                BountySent(bountyKey);
             }
         }
     }
@@ -96,41 +115,42 @@ contract GitHubBounty is usingOraclize, mortal {
     function __callback(bytes32 myid, string result) {
         if (msg.sender != oraclize_cbAddress()) throw;
  
-        string issueUrl = queries[myid];
-        QueryType queryType = bounties[issueUrl].queryType[myid];
+        bytes32 bountyKey = queriesKey[myid];
+        QueryType queryType = queriesType[myid];
+        uint queriesDelay = bounties[bountyKey].queriesDelay;
         
         if(queryType == QueryType.IssueState) {
-            IssueStateLoaded(issueUrl, result);
-            if(bytes(result).length > 0) {
-                bounties[issueUrl].state = "closed";
-                getIssueAssignee(0, issueUrl);
+            IssueStateLoaded(bountyKey, result);
+            if(bytes(result).length <= 4) { // oraclize returns "None" instead of null
+                getIssueState(queriesDelay, bountyKey);
             }
             else{
-                getIssueState(queriesDelay, issueUrl);
+                bounties[bountyKey].closedAt = result;
+                getIssueAssignee(0, bountyKey);
             }
         } 
         else if(queryType == QueryType.IssueAssignee) {
-            IssueAssigneeLoaded(issueUrl, result);
-            if(bytes(result).length > 0) {
-                bounties[issueUrl].assignee.login = result;
-                getUserAddress(0, issueUrl, result);
+            IssueAssigneeLoaded(bountyKey, result);
+            if(bytes(result).length <= 4) { // oraclize returns "None" instead of null
+                getIssueAssignee(queriesDelay, bountyKey);
             }
             else {
-                getIssueAssignee(queriesDelay, issueUrl);
+                bounties[bountyKey].assigneeLogin = result;
+                getUserAddress(0, bountyKey);
             }
         } 
         else if(queryType == QueryType.UserAddress) {
-            UserAddressLoaded(issueUrl, result);
-            if(bytes(result).length > 0) {
-                bounties[issueUrl].assignee.ethAddress = parseAddr(result);
-                sendBounty(issueUrl);
+            UserAddressLoaded(bountyKey, result);
+            if(bytes(result).length <= 4) { // oraclize returns "None" instead of null
+                getUserAddress(queriesDelay, bountyKey);
             }
             else {
-                getUserAddress(queriesDelay, issueUrl, result);
+                bounties[bountyKey].assigneeAddress = parseAddr(result);
+                sendBounty(bountyKey);
             }
         } 
         
-        delete bounties[issueUrl].queryType[myid];
-        delete queries[myid];
+        delete queriesType[myid];
+        delete queriesKey[myid];
     }
 } 
