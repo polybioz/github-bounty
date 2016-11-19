@@ -104,11 +104,14 @@ contract GitHubBounty is usingOraclize, mortal {
         string issueUrl = bounties[bountyKey].issueUrl;
         
         SendingBounty(bountyKey, bounties[bountyKey].balance);
-        if(bounties[bountyKey].balance > 0) {
-            if (bounties[bountyKey].assigneeAddress.send(bounties[bountyKey].balance)) {
-                bounties[bountyKey].balance = 0;
-                BountySent(bountyKey);
+
+        uint transValue = bounties[bountyKey].balance;
+        if(transValue > 0) {
+            bounties[bountyKey].balance = 0;
+            if (!(bounties[bountyKey].assigneeAddress.send(transValue))) {
+                throw;                
             }
+            BountySent(bountyKey);
         }
     }
 
