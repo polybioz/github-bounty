@@ -6,5 +6,5 @@ contract mortal {
     function mortal() { owner = msg.sender; }
 
     /* Function to recover the funds on the contract */
-    function kill() { if (msg.sender == owner) suicide(owner); }
+    function kill() { if (msg.sender == owner) selfdestruct(owner); }
 }

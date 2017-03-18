@@ -27,8 +27,8 @@ contract GitHubBounty is usingOraclize, mortal {
     event BountyAdded(bytes32 bountyKey, string issueUrl);
     event IssueStateLoaded(bytes32 bountyKey, string closedAt);
     event IssueAssigneeLoaded(bytes32 bountyKey, string login);
-    event UserAddressLoaded(bytes32 bountyKey, string ethAddress);
-    event SendingBounty(bytes32 bountyKey, uint prize);
+    event UserAddressLoaded(bytes32 bountyKey, string assigneeAddress);
+    event SendingBounty(bytes32 bountyKey, uint prize, address assigneeAddress);
     event BountySent(bytes32 bountyKey);
     
     uint oraclizeGasLimit = 1000000;
@@ -38,19 +38,20 @@ contract GitHubBounty is usingOraclize, mortal {
     
     function addSponsor(address sponsorAddr)
     {
-        if (msg.sender != owner) throw;
+        require(msg.sender == owner);
         sponsors[sponsorAddr] = true;
         SponsorAdded(sponsorAddr);
     }
     
     // issueUrl: full API url of github issue, e.g. https://api.github.com/repos/polybioz/hello-world/issues/6
     // queriesDelay: oraclize queries delay in minutes, e.g. 60*24 for one day, min 1 minute
-    function addIssueBounty(string issueUrl, uint queriesDelay){
+    function addIssueBounty(string issueUrl, uint queriesDelay) payable {
+        require(sponsors[msg.sender]);
+        require(bytes(issueUrl).length > 0);
+        require(msg.value > 0);
+        require(queriesDelay > 0);
         
-        if (!sponsors[msg.sender]) throw;
-        if (bytes(issueUrl).length==0) throw;
-        if (msg.value == 0) throw;
-        if (queriesDelay == 0) throw;
+        queriesDelay = queriesDelay * 60; // convert minutes to seconds
         
         bytes32 bountyKey = sha3(issueUrl);
         
@@ -103,7 +104,7 @@ contract GitHubBounty is usingOraclize, mortal {
     function sendBounty(bytes32 bountyKey) internal {
         string issueUrl = bounties[bountyKey].issueUrl;
         
-        SendingBounty(bountyKey, bounties[bountyKey].balance);
+        SendingBounty(bountyKey, bounties[bountyKey].balance, bounties[bountyKey].assigneeAddress);
 
         uint transValue = bounties[bountyKey].balance;
         if(transValue > 0) {
@@ -124,7 +125,7 @@ contract GitHubBounty is usingOraclize, mortal {
         
         if(queryType == QueryType.IssueState) {
             IssueStateLoaded(bountyKey, result);
-            if(bytes(result).length <= 4) { // oraclize returns "None" instead of null
+            if(bytes(result).length <= 4) { // oraclize returns "null"
                 getIssueState(queriesDelay, bountyKey);
             }
             else{
@@ -134,7 +135,7 @@ contract GitHubBounty is usingOraclize, mortal {
         } 
         else if(queryType == QueryType.IssueAssignee) {
             IssueAssigneeLoaded(bountyKey, result);
-            if(bytes(result).length <= 4) { // oraclize returns "None" instead of null
+            if(bytes(result).length <= 4) { // oraclize returns "null"
                 getIssueAssignee(queriesDelay, bountyKey);
             }
             else {
@@ -144,7 +145,7 @@ contract GitHubBounty is usingOraclize, mortal {
         } 
         else if(queryType == QueryType.UserAddress) {
             UserAddressLoaded(bountyKey, result);
-            if(bytes(result).length <= 4) { // oraclize returns "None" instead of null
+            if(bytes(result).length <= 4) { // oraclize returns "null"
                 getUserAddress(queriesDelay, bountyKey);
             }
             else {
@@ -156,4 +157,4 @@ contract GitHubBounty is usingOraclize, mortal {
         delete queriesType[myid];
         delete queriesKey[myid];
     }
-} 
+}
